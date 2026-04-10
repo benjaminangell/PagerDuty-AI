@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PagerDuty Standards Audit — Kaluza</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f3f4f6; color: #111; padding: 24px; }
+    .card { background: #fff; border-radius: 10px; padding: 24px; max-width: 800px; margin: 0 auto; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    h2 { font-size: 20px; margin-bottom: 4px; }
+    .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
+    .row { display: flex; gap: 8px; margin-bottom: 6px; }
+    input[type=password] { flex: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+    button { padding: 8px 20px; background: #16a34a; color: #fff; border: none; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; white-space: nowrap; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .hint { font-size: 11px; color: #9ca3af; margin-bottom: 20px; }
+    .info { padding: 12px 14px; background: #eff6ff; border-radius: 8px; color: #1d4ed8; font-size: 13px; text-align: center; margin-bottom: 14px; }
+    .error { padding: 12px; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; color: #991b1b; font-size: 13px; margin-bottom: 14px; }
+    .warn { padding: 10px 14px; background: #fef9c3; border: 1px solid #fde047; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+    .success { padding: 14px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; text-align: center; font-weight: 600; color: #15803d; margin-bottom: 14px; }
+    .summary { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .summary-card { flex: 1 1 140px; padding: 12px 14px; border-radius: 8px; }
+    .summary-card .num { font-size: 22px; font-weight: 700; }
+    .summary-card .num span { font-size: 13px; color: #9ca3af; }
+    .summary-card .lbl { font-size: 12px; color: #6b7280; }
+    .section { margin-bottom: 14px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+    .section-header { padding: 10px 16px; background: #f9fafb; cursor: pointer; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; user-select: none; }
+    .section-header .ic { color: #dc2626; font-size: 12px; }
+    .section-body { padding: 14px; }
+    .pass-row { margin-bottom: 4px; padding: 6px 10px; background: #f0fdf4; border-left: 3px solid #22c55e; border-radius: 4px; font-size: 13px; }
+    .fail-row { margin-bottom: 8px; padding: 8px 12px; background: #fff7ed; border-left: 3px solid #f97316; border-radius: 4px; }
+    .fail-row .name { font-weight: 600; font-size: 13px; }
+    .fail-row .issue { font-size: 12px; color: #92400e; margin-top: 2px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h2>🔍 PagerDuty Standards Audit</h2>
+  <p class="subtitle">Audits your PagerDuty config against the Kaluza Best Practice Standards.</p>
+
+  <div class="row">
+    <input type="password" id="apiKey" placeholder="PagerDuty read-only API key" />
+    <button id="runBtn" onclick="runAudit()">Run Audit</button>
+  </div>
+  <p class="hint">Get a read-only key: ovo-tech.pagerduty.com → User menu → API Access Keys. Used only for this audit.</p>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+const ANTHROPIC_API_KEY = ""; // Optional: set if self-hosting with a key
+
+async function callClaude(pdKey) {
+  const prompt = `You are a PagerDuty configuration auditor for Kaluza. Using the PagerDuty REST API with the provided API key, fetch and audit resources against the Kaluza PagerDuty Best Practice Standards.
+
+PagerDuty API Key: ${pdKey}
+PagerDuty Base URL: https://api.pagerduty.com
+Auth header format: "Authorization: Token token=<key>"
+
+Fetch these endpoints and audit them:
+1. GET /services?include[]=integrations&limit=100
+   - Service names must follow: <Team> :: <Component> :: <Environment> or at minimum <Team> :: <Component>
+   - Every team must have a "<TeamName> :: General" service
+2. GET /escalation_policies?include[]=targets&limit=100
+   - Names must match: <Team> - SEV1|SEV2|SEV3|SEV4 - EP
+   - No direct user targets in escalation rules (must use schedules)
+   - num_loops must be >= 3
+3. GET /schedules?limit=100
+   - Names must match: <Team> - Primary|Secondary|Shadow - <Coverage>
+   - Must not be empty
+4. GET /users?include[]=notification_rules&limit=100
+   - Email must end in @kaluza.com
+   - Must have phone (voice), SMS, and email notification rules configured
+
+Return ONLY a valid JSON object, no markdown, no explanation:
+{
+  "summary": {
+    "services": { "total": 0, "failing": 0 },
+    "eps": { "total": 0, "failing": 0 },
+    "schedules": { "total": 0, "failing": 0 },
+    "users": { "total": 0, "failing": 0 }
+  },
+  "services": [ { "name": "...", "issues": [] } ],
+  "eps": [ { "name": "...", "issues": [] } ],
+  "schedules": [ { "name": "...", "issues": [] } ],
+  "users": [ { "name": "...", "issues": [] } ]
+}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 8000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!res.ok) throw new Error(`Claude API error: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  const text = data.content.filter(b => b.type === "text").map(b => b.text).join("");
+  const clean = text.replace(/```json|```/g, "").trim();
+  const s = clean.indexOf("{"), e = clean.lastIndexOf("}");
+  if (s === -1) throw new Error("No audit results returned. Check your PagerDuty API key.");
+  return JSON.parse(clean.slice(s, e + 1));
+}
+
+function setStatus(html) { document.getElementById("status").innerHTML = html; }
+function setResults(html) { document.getElementById("results").innerHTML = html; }
+
+function toggle(id) {
+  const el = document.getElementById(id);
+  const arr = document.getElementById(id + "-arrow");
+  el.style.display = el.style.display === "none" ? "block" : "none";
+  arr.textContent = el.style.display === "none" ? "▼" : "▲";
+}
+
+function renderSection(title, items, failCount, id) {
+  const rows = (items || []).map(s => {
+    if (!s.issues || s.issues.length === 0)
+      return `<div class="pass-row">✓ ${s.name}</div>`;
+    return `<div class="fail-row">
+      <div class="name">${s.name}</div>
+      ${s.issues.map(i => `<div class="issue">• ${i}</div>`).join("")}
+    </div>`;
+  }).join("");
+
+  return `<div class="section">
+    <div class="section-header" onclick="toggle('${id}')">
+      <span>${title} ${failCount > 0 ? `<span class="ic">(${failCount} issue${failCount !== 1 ? "s" : ""})</span>` : ""}</span>
+      <span id="${id}-arrow">▲</span>
+    </div>
+    <div class="section-body" id="${id}">${rows || "<p style='font-size:13px;color:#6b7280'>No items found.</p>"}</div>
+  </div>`;
+}
+
+async function runAudit() {
+  const key = document.getElementById("apiKey").value.trim();
+  if (!key) return;
+  const btn = document.getElementById("runBtn");
+  btn.disabled = true;
+  btn.textContent = "Auditing…";
+  setStatus('<div class="info">⏳ Fetching your PagerDuty config and auditing against standards… This may take 20–40 seconds.</div>');
+  setResults("");
+
+  try {
+    const data = await callClaude(key);
+    setStatus("");
+
+    const totalIssues = Object.values(data.summary).reduce((a, v) => a + (v.failing || 0), 0);
+    const s = data.summary;
+
+    const summaryCards = [
+      { label: "Services", k: "services" },
+      { label: "Escalation Policies", k: "eps" },
+      { label: "Schedules", k: "schedules" },
+      { label: "Users", k: "users" },
+    ].map(({ label, k }) => {
+      const v = s[k] || {};
+      const pass = (v.total || 0) - (v.failing || 0);
+      const fail = v.failing || 0;
+      const bg = fail > 0 ? "#fff7ed" : "#f0fdf4";
+      const border = fail > 0 ? "#fdba74" : "#86efac";
+      const col = fail > 0 ? "#c2410c" : "#15803d";
+      return `<div class="summary-card" style="background:${bg};border:1px solid ${border}">
+        <div class="num" style="color:${col}">${pass}<span>/${v.total || 0}</span></div>
+        <div class="lbl">${label} passing</div>
+      </div>`;
+    }).join("");
+
+    const banner = totalIssues === 0
+      ? `<div class="success">🎉 All checks passed! Your PagerDuty config meets the Kaluza standards.</div>`
+      : `<div class="warn">⚠️ Found <strong>${totalIssues}</strong> issue${totalIssues !== 1 ? "s" : ""} to address.</div>`;
+
+    setResults(`
+      <div class="summary">${summaryCards}</div>
+      ${banner}
+      ${renderSection("Services", data.services, s.services?.failing || 0, "sec-services")}
+      ${renderSection("Escalation Policies", data.eps, s.eps?.failing || 0, "sec-eps")}
+      ${renderSection("Schedules", data.schedules, s.schedules?.failing || 0, "sec-schedules")}
+      ${renderSection("Users & Notification Rules", data.users, s.users?.failing || 0, "sec-users")}
+    `);
+  } catch (e) {
+    setStatus(`<div class="error">⚠️ ${e.message}</div>`);
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Run Audit";
+}
+</script>
+</body>
+</html>
